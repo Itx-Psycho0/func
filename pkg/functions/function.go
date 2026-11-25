@@ -227,7 +227,7 @@ type DeliverySpec struct {
 	// attempts = retry + 1). A nil value (field omitted) means unlimited retries;
 	// 0 means a single attempt with no retry. A pointer is used so the "unset =
 	// unlimited" default is distinguishable from an explicit 0.
-	Retry *int `yaml:"retry,omitempty" jsonschema:"description=Retries after the first delivery attempt. Omit for unlimited; 0 means a single attempt with no retry." jsonschema_extras:"minimum=0"`
+	Retry *int `yaml:"retry,omitempty" jsonschema:"description=Retries after the first delivery attempt. Omit for unlimited; 0 means a single attempt with no retry.,minimum=0"`
 	// BackoffPolicy is how the inter-retry delay grows: exponential (default) or
 	// linear.
 	BackoffPolicy string `yaml:"backoffPolicy,omitempty" jsonschema:"description=How the inter-retry delay grows: exponential (default) or linear,enum=exponential,enum=linear"`

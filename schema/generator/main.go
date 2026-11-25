@@ -5,11 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"reflect"
-	"strconv"
-	"strings"
 
-	"github.com/alecthomas/jsonschema"
+	"github.com/invopop/jsonschema"
 
 	fn "knative.dev/func/pkg/functions"
 )
@@ -40,21 +37,20 @@ func generateFuncYamlSchema() error {
 // included. It is separated from generateFuncYamlSchema so the schema can be
 // verified without writing to the working tree.
 func funcYamlSchema() ([]byte, error) {
-	// generate json schema for function struct
-	r := &jsonschema.Reflector{}
+	r := &jsonschema.Reflector{
+		// func.yaml fields are named by their yaml tags; Function has no
+		// json tags.
+		FieldNameTag: "yaml",
+		// Do not emit an $id derived from the Go package path: it is not
+		// where the schema is published.
+		Anonymous: true,
+	}
 
 	if err := r.AddGoComments("knative.dev/func", "./pkg/functions/"); err != nil {
 		return nil, fmt.Errorf("cannot parse docstrings: %w", err)
 	}
 
-	js := r.Reflect(&fn.Function{})
-
-	// restore the constraint reflection cannot represent
-	if err := restoreTargetMinimum(js); err != nil {
-		return nil, err
-	}
-
-	schema, err := js.MarshalJSON()
+	schema, err := json.Marshal(r.Reflect(&fn.Function{}))
 	if err != nil {
 		return nil, err
 	}
@@ -70,69 +66,4 @@ func funcYamlSchema() ([]byte, error) {
 	}
 
 	return indentedSchema.Bytes(), nil
-}
-
-// restoreTargetMinimum re-applies the fractional minimum declared on
-// KPAScaleOptions.Target, which reflection truncates to zero.
-//
-// The reflector (github.com/alecthomas/jsonschema) represents the `minimum`
-// keyword as an int and parses its tag value with strconv.Atoi, discarding the
-// error:
-//
-//	type Type struct {
-//		Minimum int `json:"minimum,omitempty"`
-//	}
-//
-// KPAScaleOptions.Target declares jsonschema_extras:"minimum=0.01", so the
-// value fails to parse, silently degrades to zero, and the generated schema
-// ends up publishing "minimum": 0 where the runtime validation of the same
-// value (validateKPAScale in pkg/functions/function_scale.go) requires
-// >= 0.01.
-//
-// The value is read from the existing struct tag rather than duplicated in the
-// generator, so this correction follows the schema constraint declared on
-// KPAScaleOptions.Target.
-func restoreTargetMinimum(schema *jsonschema.Schema) error {
-	field, ok := reflect.TypeOf(fn.KPAScaleOptions{}).FieldByName("Target")
-	if !ok {
-		return fmt.Errorf("KPAScaleOptions has no Target field")
-	}
-
-	// The reflector names a property after the field's json tag, falling back
-	// to its yaml tag; Target declares only a yaml name.
-	name := strings.Split(field.Tag.Get("yaml"), ",")[0]
-	definition, ok := schema.Definitions["KPAScaleOptions"]
-	if !ok {
-		return fmt.Errorf("generated schema has no KPAScaleOptions definition")
-	}
-	// orderedmap.Get dereferences its receiver, so a nil Properties map would
-	// panic rather than report the malformed definition.
-	if definition.Properties == nil {
-		return fmt.Errorf("generated KPAScaleOptions definition has no properties")
-	}
-	property, ok := definition.Properties.Get(name)
-	if !ok {
-		return fmt.Errorf("KPAScaleOptions has no %q property", name)
-	}
-	t, ok := property.(*jsonschema.Type)
-	if !ok {
-		return fmt.Errorf("KPAScaleOptions.%s is not a schema", name)
-	}
-
-	for _, keyword := range strings.Split(field.Tag.Get("jsonschema_extras"), ",") {
-		value, ok := strings.CutPrefix(keyword, "minimum=")
-		if !ok {
-			continue
-		}
-		minimum, err := strconv.ParseFloat(value, 64)
-		if err != nil {
-			return fmt.Errorf("KPAScaleOptions.%s: minimum=%s is not a number", name, value)
-		}
-		if t.Extras == nil {
-			t.Extras = map[string]interface{}{}
-		}
-		t.Extras["minimum"] = minimum
-		return nil
-	}
-	return fmt.Errorf("KPAScaleOptions.%s declares no minimum", name)
 }

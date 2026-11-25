@@ -42,62 +42,96 @@ func repoRoot() (string, error) {
 	}
 }
 
-// TestTargetMinimumIsPreserved is the regression test for the reported bug.
+// TestNumericBounds checks that the numeric bounds declared in jsonschema
+// struct tags reach the generated schema unchanged.
 //
-// The generator published "minimum": 0 for KPAScaleOptions.target, because
-// reflection truncated the fractional value, while the runtime validation
-// requires target >= 0.01. The schema was therefore looser than the validation
-// it documents: target: 0.001 passed the schema and was rejected at deploy.
-// The integral bounds of the neighbouring properties are asserted alongside it,
-// so the correction cannot be mistaken for a general distortion of the
-// reflected numbers.
-//
-// It also asserts that the exclusiveMinimum workaround that stood in for the
-// truncated minimum is gone: under the draft-04 declared by this document, a
-// boolean exclusiveMinimum would require target > 0.01 and so contradict
-// validateKPAScale, which accepts exactly 0.01.
-func TestTargetMinimumIsPreserved(t *testing.T) {
+// The previous generator (github.com/alecthomas/jsonschema) parsed minimum as
+// an int and omitted a zero minimum, so KPAScaleOptions.target published
+// "minimum": 0 instead of 0.01 and every minimum=0 had to be declared through
+// jsonschema_extras. The verbatim JSON token is compared rather than a decoded
+// number, so an integral bound cannot pass for a fractional one.
+func TestNumericBounds(t *testing.T) {
 	schema, err := funcYamlSchema()
 	if err != nil {
 		t.Fatalf("cannot generate schema: %s", err)
 	}
 
 	var doc struct {
-		Definitions map[string]struct {
+		Defs map[string]struct {
 			Properties map[string]map[string]json.RawMessage `json:"properties"`
-		} `json:"definitions"`
+		} `json:"$defs"`
 	}
 	if err := json.Unmarshal(schema, &doc); err != nil {
 		t.Fatalf("cannot parse schema: %s", err)
 	}
 
-	// The verbatim JSON token is compared rather than a decoded number, so an
-	// integral bound cannot pass as the fractional one.
 	tests := []struct {
 		definition string
 		property   string
 		keyword    string
 		want       string
 	}{
-		// the reported bug
+		// fractional minimum, enforced as >= 0.01 by validateKPAScale
 		{"KPAScaleOptions", "target", "minimum", "0.01"},
-		// the neighbouring integral bounds must be unaffected
 		{"KPAScaleOptions", "utilization", "minimum", "1"},
 		{"KPAScaleOptions", "utilization", "maximum", "100"},
+		// zero minimums must not be dropped
+		{"ScaleOptions", "min", "minimum", "0"},
+		{"ScaleOptions", "min", "maximum", "2147483647"},
+		{"ScaleOptions", "max", "minimum", "0"},
+		{"ScaleOptions", "max", "maximum", "2147483647"},
+		{"KEDATrigger", "activationLagThreshold", "minimum", "0"},
+		{"ResourcesLimitsOptions", "concurrency", "minimum", "0"},
+		{"DeliverySpec", "retry", "minimum", "0"},
+		// minimum declared next to a description in the same tag
+		{"KEDAScaleOptions", "pollingInterval", "minimum", "1"},
+		{"KEDAScaleOptions", "cooldownPeriod", "minimum", "1"},
+		{"KEDATrigger", "targetValue", "minimum", "1"},
+		{"KEDATrigger", "lagThreshold", "minimum", "1"},
 	}
 	for _, test := range tests {
-		got := string(doc.Definitions[test.definition].Properties[test.property][test.keyword])
+		got := string(doc.Defs[test.definition].Properties[test.property][test.keyword])
 		if got != test.want {
 			t.Errorf("%s.%s %s = %s, want %s", test.definition, test.property, test.keyword, got, test.want)
 		}
 	}
 
-	// This document declares draft-04, where a boolean exclusiveMinimum makes
-	// minimum exclusive: target > 0.01 would be required, while
-	// validateKPAScale accepts target >= 0.01. The keyword was only ever
-	// present as a workaround for the truncation restored above, so it must be
-	// gone now that minimum is emitted as the fractional value.
-	if got := string(doc.Definitions["KPAScaleOptions"].Properties["target"]["exclusiveMinimum"]); got == "true" {
-		t.Errorf("KPAScaleOptions.target exclusiveMinimum = %s, want absent: it requires target > 0.01, but validateKPAScale accepts target >= 0.01", got)
+	// A boolean exclusiveMinimum (draft-04) or a numeric one (2020-12) would
+	// make target > 0.01 required, while validateKPAScale accepts exactly 0.01.
+	if got, ok := doc.Defs["KPAScaleOptions"].Properties["target"]["exclusiveMinimum"]; ok {
+		t.Errorf("KPAScaleOptions.target exclusiveMinimum = %s, want absent: validateKPAScale accepts target >= 0.01", got)
+	}
+}
+
+// TestDescriptionsAreComplete checks that a description declared in a
+// jsonschema tag is not cut short by the tag's other keywords.
+func TestDescriptionsAreComplete(t *testing.T) {
+	schema, err := funcYamlSchema()
+	if err != nil {
+		t.Fatalf("cannot generate schema: %s", err)
+	}
+
+	var doc struct {
+		Defs map[string]struct {
+			Properties map[string]struct {
+				Description string `json:"description"`
+			} `json:"properties"`
+		} `json:"$defs"`
+	}
+	if err := json.Unmarshal(schema, &doc); err != nil {
+		t.Fatalf("cannot parse schema: %s", err)
+	}
+
+	tests := []struct {
+		definition, property, want string
+	}{
+		{"KEDAScaleOptions", "pollingInterval", "How often KEDA checks the trigger in seconds (default 30). Applies only to kafka triggers; it has no effect on an http trigger (which scales from interceptor-reported metrics and has no polling concept)."},
+		{"DeliverySpec", "retry", "Retries after the first delivery attempt. Omit for unlimited; 0 means a single attempt with no retry."},
+	}
+	for _, test := range tests {
+		got := doc.Defs[test.definition].Properties[test.property].Description
+		if got != test.want {
+			t.Errorf("%s.%s description = %q, want %q", test.definition, test.property, got, test.want)
+		}
 	}
 }

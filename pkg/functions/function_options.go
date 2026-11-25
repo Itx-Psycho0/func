@@ -12,25 +12,22 @@ type Options struct {
 
 // On the min/max tags below: maximum is int32 max because both deployers narrow
 // min/max to the int32 Kubernetes replica count, so ValidateScale rejects
-// anything larger -- the schema is kept in step. minimum stays in
-// jsonschema_extras rather than the jsonschema tag because the latter omits a
-// zero-valued minimum. This block is deliberately not a field doc comment (a
-// blank line separates it from ScaleOptions) so it does not leak into the
-// generated schema as a description.
+// anything larger -- the schema is kept in step. This block is deliberately
+// not a field doc comment (a blank line separates it from ScaleOptions) so it
+// does not leak into the generated schema as a description.
 
 type ScaleOptions struct {
-	Min  *int64            `yaml:"min,omitempty" jsonschema:"maximum=2147483647" jsonschema_extras:"minimum=0"`
-	Max  *int64            `yaml:"max,omitempty" jsonschema:"maximum=2147483647" jsonschema_extras:"minimum=0"`
+	Min  *int64            `yaml:"min,omitempty" jsonschema:"minimum=0,maximum=2147483647"`
+	Max  *int64            `yaml:"max,omitempty" jsonschema:"minimum=0,maximum=2147483647"`
 	KEDA *KEDAScaleOptions `yaml:"keda,omitempty"`
 	KPA  *KPAScaleOptions  `yaml:"kpa,omitempty"`
 }
 
 type KEDAScaleOptions struct {
-	// The jsonschema description avoids commas: the alecthomas/jsonschema
-	// generator splits the jsonschema tag on commas and would truncate the
-	// text at the first one.
-	PollingInterval *int32 `yaml:"pollingInterval,omitempty" jsonschema:"description=How often KEDA checks the trigger in seconds (default 30). Applies only to kafka triggers; it has no effect on an http trigger (which scales from interceptor-reported metrics and has no polling concept)." jsonschema_extras:"minimum=1"`
-	CooldownPeriod  *int32 `yaml:"cooldownPeriod,omitempty" jsonschema_extras:"minimum=1"`
+	// The jsonschema tag is split on commas, so a comma inside the description
+	// must be escaped as \, or it ends the description early.
+	PollingInterval *int32 `yaml:"pollingInterval,omitempty" jsonschema:"description=How often KEDA checks the trigger in seconds (default 30). Applies only to kafka triggers; it has no effect on an http trigger (which scales from interceptor-reported metrics and has no polling concept).,minimum=1"`
+	CooldownPeriod  *int32 `yaml:"cooldownPeriod,omitempty" jsonschema:"minimum=1"`
 
 	// triggers has no omitempty: the schema generator derives "required" from
 	// its absence, matching ValidateScale (a written scale.keda requires >=1
@@ -44,14 +41,14 @@ type KEDAScaleOptions struct {
 
 type KEDATrigger struct {
 	Type                   string `yaml:"type" jsonschema:"enum=http,enum=kafka"`
-	TargetValue            *int64 `yaml:"targetValue,omitempty" jsonschema_extras:"minimum=1"`
-	LagThreshold           *int64 `yaml:"lagThreshold,omitempty" jsonschema_extras:"minimum=1"`
-	ActivationLagThreshold *int64 `yaml:"activationLagThreshold,omitempty" jsonschema_extras:"minimum=0"`
+	TargetValue            *int64 `yaml:"targetValue,omitempty" jsonschema:"minimum=1"`
+	LagThreshold           *int64 `yaml:"lagThreshold,omitempty" jsonschema:"minimum=1"`
+	ActivationLagThreshold *int64 `yaml:"activationLagThreshold,omitempty" jsonschema:"minimum=0"`
 }
 
 type KPAScaleOptions struct {
 	Metric      *string  `yaml:"metric,omitempty" jsonschema:"enum=concurrency,enum=rps"`
-	Target      *float64 `yaml:"target,omitempty" jsonschema_extras:"minimum=0.01"` // minimum stays in jsonschema_extras because jsonschema's "minimum" is an int; the schema generator restores the fractional value reflection truncates (see restoreTargetMinimum), matching the >= 0.01 validateKPAScale enforces
+	Target      *float64 `yaml:"target,omitempty" jsonschema:"minimum=0.01"`
 	Utilization *float64 `yaml:"utilization,omitempty" jsonschema:"minimum=1,maximum=100"`
 }
 
@@ -63,7 +60,7 @@ type ResourcesOptions struct {
 type ResourcesLimitsOptions struct {
 	CPU         *string `yaml:"cpu,omitempty" jsonschema:"pattern=^([+-]?[0-9.]+)([eEinumkKMGTP]*[-+]?[0-9]*)$"`
 	Memory      *string `yaml:"memory,omitempty" jsonschema:"pattern=^([+-]?[0-9.]+)([eEinumkKMGTP]*[-+]?[0-9]*)$"`
-	Concurrency *int64  `yaml:"concurrency,omitempty" jsonschema_extras:"minimum=0"`
+	Concurrency *int64  `yaml:"concurrency,omitempty" jsonschema:"minimum=0"`
 }
 
 type ResourcesRequestsOptions struct {
